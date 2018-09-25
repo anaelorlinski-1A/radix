@@ -56,6 +56,7 @@ type ClusterCanRetryAction interface {
 type clusterOpts struct {
 	pf        ClientFunc
 	syncEvery time.Duration
+	log       Logger
 }
 
 // ClusterOpt is an optional behavior which can be applied to the NewCluster
@@ -76,6 +77,14 @@ func ClusterPoolFunc(pf ClientFunc) ClusterOpt {
 func ClusterSyncEvery(d time.Duration) ClusterOpt {
 	return func(co *clusterOpts) {
 		co.syncEvery = d
+	}
+}
+
+// ClusterLogger tells the Cluster to use the given logger
+func ClusterLogger(log Logger) ClusterOpt {
+	return func(co *clusterOpts) {
+		co.log = log
+
 	}
 }
 
@@ -123,6 +132,8 @@ func NewCluster(clusterAddrs []string, opts ...ClusterOpt) (*Cluster, error) {
 	defaultClusterOpts := []ClusterOpt{
 		ClusterPoolFunc(DefaultClientFunc),
 		ClusterSyncEvery(5 * time.Second),
+
+		ClusterLogger(DefaultLogger),
 	}
 
 	for _, opt := range append(defaultClusterOpts, opts...) {
@@ -271,13 +282,25 @@ func (c *Cluster) getTopo(p Client) (ClusterTopo, error) {
 // This will be called periodically automatically, but you can manually call it
 // at any time as well
 func (c *Cluster) Sync() error {
-	p, err := c.pool("")
+	return c.syncWithAddr("")
+}
+
+// Sync will synchronize the Cluster with the actual cluster, making new pools
+// to new instances and removing ones from instances no longer in the cluster.
+// This will be called periodically automatically, but you can manually call it
+// at any time as well
+func (c *Cluster) syncWithAddr(addr string) error {
+	p, err := c.pool(addr)
 	if err != nil {
+		c.co.log.Warnf("SyncWithAddr error %v", err)
 		return err
 	}
 	c.syncDedupe.do(func() {
 		err = c.sync(p)
 	})
+	if err != nil {
+		c.co.log.Warnf("Sync error:%v", err)
+	}
 	return err
 }
 
@@ -430,7 +453,15 @@ func (c *Cluster) doInner(a Action, addr, key string, ask bool, attempts int) er
 	// Also, even if the Action isn't a ClusterCanRetryAction we want a MOVED to
 	// prompt a Sync
 	if moved {
-		if serr := c.Sync(); serr != nil {
+		// retrieve address of the command
+		addr := ""
+		ind := strings.LastIndex(msg, " ")
+		if ind >= 0 {
+			addr = msg[ind+1:]
+		}
+
+		c.co.log.Logf(3, "moved key:%s, running SyncWithAddr(%v)", key, addr)
+		if serr := c.syncWithAddr(addr); serr != nil {
 			return serr
 		}
 	}

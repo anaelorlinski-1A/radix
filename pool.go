@@ -69,6 +69,8 @@ type poolOpts struct {
 	pipelineConcurrency   int
 	pipelineLimit         int
 	pipelineWindow        time.Duration
+
+	log Logger
 }
 
 // PoolOpt is an optional behavior which can be applied to the NewPool function
@@ -197,6 +199,13 @@ func PoolPipelineWindow(window time.Duration, limit int) PoolOpt {
 	}
 }
 
+// PoolLogger sets the logger interface on the pool
+func PoolLogger(log Logger) PoolOpt {
+	return func(po *poolOpts) {
+		po.log = log
+	}
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 
 // Pool is a semi-dynamic pool which holds a fixed number of connections open
@@ -261,6 +270,8 @@ func NewPool(network, addr string, size int, opts ...PoolOpt) (*Pool, error) {
 		PoolPipelineConcurrency(size),
 		// NOTE if 150us is changed the benchmarks need to be updated too
 		PoolPipelineWindow(150*time.Microsecond, 0),
+
+		PoolLogger(DefaultLogger),
 	}
 
 	for _, opt := range append(defaultPoolOpts, opts...) {
@@ -356,6 +367,7 @@ func (p *Pool) newConn(errIfFull bool) (*ioErrConn, error) {
 	}
 	p.totalConns++
 
+	//p.opts.log.Logf(4, "SPC %s new", ioc.Conn.RemoteAddr().String())
 	return ioc, nil
 }
 
